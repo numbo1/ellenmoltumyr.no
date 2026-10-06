@@ -165,9 +165,6 @@ const createDefaultMonsterAvatar = (_name: string, _color: string) => {
 const getMonsterImage = (monster: Pick<Monster, 'image' | 'name' | 'color'> | null | undefined) =>
   monster?.image || createDefaultMonsterAvatar(monster?.name || 'Creature', monster?.color || '#a78bfa')
 
-const getCharacterImage = (character: Pick<Character, 'portrait' | 'name' | 'color'> | null | undefined) =>
-  typeof character?.portrait === 'string' && character.portrait.trim() ? character.portrait : null
-
 const getCharacterDisplayPortrait = (character: Pick<Character, 'portrait' | 'name' | 'color'> | null | undefined) =>
   typeof character?.portrait === 'string' && character.portrait.trim()
     ? character.portrait
