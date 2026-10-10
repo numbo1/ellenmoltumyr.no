@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, MouseEvent as ReactMouseEvent } from 'react'
 import './App.css'
 
@@ -40,6 +40,11 @@ type BattleMap = {
   columns: number
   rows: number
   cellSize: number
+  gridBase?: {
+    columns: number
+    rows: number
+    cellSize: number
+  }
   monsterPlacements: Array<{
     id: string
     monsterId: string
@@ -287,6 +292,8 @@ function App() {
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null)
   const [selectedBattleMapId, setSelectedBattleMapId] = useState<string | null>(null)
   const [selectedWorldMapId, setSelectedWorldMapId] = useState<string | null>(null)
+  const [isWorldMapFullscreen, setIsWorldMapFullscreen] = useState(false)
+  const worldMapCanvasRef = useRef<HTMLDivElement>(null)
   const [authForm, setAuthForm] = useState({ username: '', email: '', password: '', role: 'dm' as 'dm' | 'player' })
   const [characterForm, setCharacterForm] = useState(emptyCharacterForm)
   const [portraitPreview, setPortraitPreview] = useState('')
@@ -311,6 +318,15 @@ function App() {
     }
   })
   const [saveFolderHandle, setSaveFolderHandle] = useState<FileSystemDirectoryHandle | null>(null)
+
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      setIsWorldMapFullscreen(document.fullscreenElement === worldMapCanvasRef.current)
+    }
+
+    document.addEventListener('fullscreenchange', syncFullscreenState)
+    return () => document.removeEventListener('fullscreenchange', syncFullscreenState)
+  }, [])
 
   const currentUser = useMemo(
     () => accounts.find((account) => account.id === currentUserId) ?? null,
@@ -381,6 +397,62 @@ function App() {
 
   const handleManualSave = () => {
     void persistCampaigns()
+  }
+
+  const toggleWorldMapFullscreen = async () => {
+    const canvas = worldMapCanvasRef.current
+    if (!canvas) {
+      return
+    }
+
+    if (document.fullscreenElement === canvas) {
+      await document.exitFullscreen()
+    } else {
+      await canvas.requestFullscreen()
+    }
+  }
+
+  const updateBattleMapCellSize = (mapId: string, nextCellSize: number) => {
+    updateCurrentUser((account) => {
+      const map = account.battleMaps.find((entry) => entry.id === mapId)
+      if (!map) {
+        return account
+      }
+
+      const gridBase = map.gridBase ?? {
+        columns: map.columns,
+        rows: map.rows,
+        cellSize: Number(map.cellSize) || 48,
+      }
+      const cellSize = clamp(nextCellSize, 28, 90)
+      const columns = clamp(Math.round(gridBase.columns * gridBase.cellSize / cellSize), 4, 60)
+      const rows = clamp(Math.round(gridBase.rows * gridBase.cellSize / cellSize), 4, 40)
+
+      return {
+        ...account,
+        characters: account.characters.map((character) => character.x < 0 || character.y < 0
+          ? character
+          : {
+              ...character,
+              x: clamp(Math.round(character.x * columns / map.columns), 0, columns - 1),
+              y: clamp(Math.round(character.y * rows / map.rows), 0, rows - 1),
+            }),
+        battleMaps: account.battleMaps.map((entry) => entry.id !== mapId
+          ? entry
+          : {
+              ...entry,
+              gridBase,
+              cellSize,
+              columns,
+              rows,
+              monsterPlacements: entry.monsterPlacements.map((placement) => ({
+                ...placement,
+                x: clamp(Math.round(placement.x * columns / map.columns), 0, columns - placement.sizeSquares),
+                y: clamp(Math.round(placement.y * rows / map.rows), 0, rows - placement.sizeSquares),
+              })),
+            }),
+      }
+    })
   }
 
   useEffect(() => {
@@ -1400,14 +1472,27 @@ function App() {
               </div>
 
               {selectedBattleMap ? (
-                <div
-                  className="map-canvas"
-                  style={{ aspectRatio: `${selectedBattleMap.columns} / ${selectedBattleMap.rows}` }}
-                  onClick={handleBattleMapClick}
-                  onPointerMove={handleBattleMapPointerMove}
-                  onPointerUp={() => setDraggedToken(null)}
-                  onPointerLeave={() => setDraggedToken(null)}
-                >
+                <div className="battle-board-wrap">
+                  <label className="grid-size-control">
+                    <span>Grid square size <strong>{selectedBattleMap.cellSize || 48}px</strong></span>
+                    <input
+                      type="range"
+                      min="28"
+                      max="90"
+                      step="2"
+                      value={selectedBattleMap.cellSize || 48}
+                      onChange={(event) => updateBattleMapCellSize(selectedBattleMap.id, Number(event.target.value))}
+                      aria-label="Battle map grid square size"
+                    />
+                  </label>
+                  <div
+                    className="map-canvas"
+                    style={{ aspectRatio: `${selectedBattleMap.columns} / ${selectedBattleMap.rows}` }}
+                    onClick={handleBattleMapClick}
+                    onPointerMove={handleBattleMapPointerMove}
+                    onPointerUp={() => setDraggedToken(null)}
+                    onPointerLeave={() => setDraggedToken(null)}
+                  >
                   <img src={selectedBattleMap.image} alt={selectedBattleMap.name} />
                   <div
                     className="map-grid"
@@ -1507,6 +1592,7 @@ function App() {
                     )
                   })}
 
+                  </div>
                 </div>
               ) : (
                 <div className="empty-map">Add a map to start placing your party.</div>
@@ -1549,6 +1635,7 @@ function App() {
 
               {selectedWorldMap ? (
                 <div
+                  ref={worldMapCanvasRef}
                   className="map-canvas world-canvas"
                   onClick={addWorldPin}
                   onMouseMove={handleWorldMapDragMove}
@@ -1556,6 +1643,18 @@ function App() {
                   onMouseLeave={() => setIsDraggingWorldPin(false)}
                 >
                   <img src={selectedWorldMap.image} alt={selectedWorldMap.name} />
+                  <button
+                    type="button"
+                    className="map-fullscreen-button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void toggleWorldMapFullscreen()
+                    }}
+                    aria-label={isWorldMapFullscreen ? 'Exit fullscreen map' : 'View map fullscreen'}
+                    title={isWorldMapFullscreen ? 'Exit fullscreen' : 'View fullscreen'}
+                  >
+                    {isWorldMapFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                  </button>
                   {selectedWorldMap.pin && (
                     <div
                       key={selectedWorldMap.pin.id}
